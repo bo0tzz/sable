@@ -21,6 +21,7 @@ const {
   rowItemIndex,
   rowRenders,
   eventRedacted,
+  newDivider,
 } = vi.hoisted(() => ({
   vListHandle: {
     scrollSize: 1000,
@@ -57,6 +58,7 @@ const {
   rowItemIndex: { current: 0 },
   rowRenders: { count: 0 },
   eventRedacted: { current: false },
+  newDivider: { current: false },
 }));
 
 let lastOnScroll: ((offset: number) => void) | undefined;
@@ -170,6 +172,7 @@ vi.mock('$hooks/timeline/useProcessedTimeline', async (importOriginal) => {
       // Same object every call so the row memo can compare eventData by identity.
       fakeEvent.itemIndex = rowItemIndex.current;
       fakeEvent.isRedacted = eventRedacted.current;
+      fakeEvent.willRenderNewDivider = newDivider.current;
       return (options.items as number[]).length === 0 ? [] : [fakeEvent];
     },
   };
@@ -286,6 +289,31 @@ const getContentEl = (container: HTMLElement) => {
   return contentEl as Element;
 };
 
+const stubFollowGeometry = (
+  container: HTMLElement,
+  { dividerTop, distanceToBottom }: { dividerTop: number; distanceToBottom: number }
+) => {
+  const scrollEl = container.querySelector('[data-testid="vlist-scroll"]') as HTMLElement;
+  const dividerEl = container.querySelector('[data-unread-divider]') as HTMLElement;
+  expect(dividerEl).toBeTruthy();
+  let scrollTop = 0;
+  Object.defineProperty(scrollEl, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: (next: number) => {
+      scrollTop = next;
+    },
+  });
+  Object.defineProperty(scrollEl, 'clientHeight', { value: 600, configurable: true });
+  Object.defineProperty(scrollEl, 'scrollHeight', {
+    value: 600 + distanceToBottom,
+    configurable: true,
+  });
+  scrollEl.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+  dividerEl.getBoundingClientRect = () => ({ top: dividerTop }) as DOMRect;
+  return scrollEl;
+};
+
 const renderTimeline = () => render(<RoomTimeline room={room} editor={{} as Editor} />);
 
 beforeEach(() => {
@@ -297,6 +325,7 @@ beforeEach(() => {
   rowItemIndex.current = 0;
   rowRenders.count = 0;
   eventRedacted.current = false;
+  newDivider.current = false;
   timelineSync.eventsLength = 1;
   timelineSync.focusItem = undefined;
   timelineSync.canPaginateBack = false;
@@ -358,6 +387,60 @@ describe('RoomTimeline content ResizeObserver', () => {
     act(() => fireResize(contentEl));
 
     expect(vListHandle.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it('pins the unread divider to the top instead of following past it', async () => {
+    newDivider.current = true;
+    const { container } = renderTimeline();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    vListHandle.scrollToIndex.mockClear();
+
+    const scrollEl = stubFollowGeometry(container, { dividerTop: 100, distanceToBottom: 400 });
+    act(() => fireResize(getContentEl(container)));
+
+    expect(scrollEl.scrollTop).toBe(100);
+    expect(vListHandle.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it('follows to the bottom when the divider still fits above it', async () => {
+    newDivider.current = true;
+    const { container } = renderTimeline();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    vListHandle.scrollToIndex.mockClear();
+
+    const scrollEl = stubFollowGeometry(container, { dividerTop: 400, distanceToBottom: 100 });
+    act(() => fireResize(getContentEl(container)));
+
+    expect(scrollEl.scrollTop).toBe(0);
+    expect(vListHandle.scrollToIndex).toHaveBeenCalledWith(
+      0,
+      expect.objectContaining({ align: 'end' })
+    );
+  });
+
+  it('follows normally when the divider is already scrolled past', async () => {
+    newDivider.current = true;
+    const { container } = renderTimeline();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    vListHandle.scrollToIndex.mockClear();
+
+    const scrollEl = stubFollowGeometry(container, { dividerTop: -50, distanceToBottom: 400 });
+    act(() => fireResize(getContentEl(container)));
+
+    expect(scrollEl.scrollTop).toBe(0);
+    expect(vListHandle.scrollToIndex).toHaveBeenCalledWith(
+      0,
+      expect.objectContaining({ align: 'end' })
+    );
   });
 
   it('scrolls to the nearest visible row when the jump target is filtered out', async () => {

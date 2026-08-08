@@ -207,7 +207,7 @@ const MemoizedTimelineItem = memo(
           </MessageBase>
         )}
         {eventData.willRenderNewDivider && (
-          <MessageBase space={messageSpacing}>
+          <MessageBase space={messageSpacing} data-unread-divider="">
             <TimelineDivider style={{ color: color.Success.Main }} variant="Inherit">
               <Badge as="span" size="500" variant="Success" fill="Solid" radii="300">
                 <Text size="L400">New Messages</Text>
@@ -487,6 +487,27 @@ export function RoomTimeline({
     [reducedMotion]
   );
 
+  const followBottom = useCallback(
+    (behavior: 'instant' | 'smooth' = 'instant') => {
+      const scrollEl = scrollElRef.current;
+      const dividerEl = scrollEl?.querySelector('[data-unread-divider]');
+      if (scrollEl && dividerEl) {
+        const dividerTop =
+          dividerEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+        const distanceToBottom = scrollEl.scrollHeight - scrollEl.clientHeight - scrollEl.scrollTop;
+        if (dividerTop >= 0 && dividerTop < distanceToBottom) {
+          // virtua's scrollBy offsets its own cached scrollOffset, which lags the
+          // live scrollTop, and defers through a measurement await that never
+          // resolves in a hidden window.
+          scrollEl.scrollTop += dividerTop;
+          return;
+        }
+      }
+      scrollToBottom(behavior);
+    },
+    [scrollToBottom]
+  );
+
   useLayoutEffect(() => {
     const scrollEl = messageListRef.current?.firstElementChild;
     scrollElRef.current = scrollEl instanceof HTMLElement ? scrollEl : null;
@@ -517,7 +538,7 @@ export function RoomTimeline({
     eventId,
     isAtBottom: atBottomState,
     isAtBottomRef: atBottomRef,
-    scrollToBottom,
+    scrollToBottom: followBottom,
     unreadInfo,
     setUnreadInfo,
     hideReadsRef,
@@ -832,7 +853,7 @@ export function RoomTimeline({
     if (contentEl) {
       contentObserver = new ResizeObserver(() => {
         if (atBottomRef.current && liveTimelineLinkedRef.current) {
-          if (processedEventsRef.current.length > 0) scrollToBottom();
+          if (processedEventsRef.current.length > 0) followBottom();
         } else {
           syncAtBottom();
         }
@@ -861,7 +882,7 @@ export function RoomTimeline({
       observer.disconnect();
       contentObserver?.disconnect();
     };
-  }, [syncAtBottom, scrollToBottom]);
+  }, [syncAtBottom, scrollToBottom, followBottom]);
 
   // Decrypting rows and late-loading images grow without changing eventsLength,
   // so useTimelineSync's auto-scroll never re-fires for them. Also catches
@@ -877,7 +898,7 @@ export function RoomTimeline({
 
     if (!changed || !atBottomRef.current || !liveTimelineLinkedRef.current) return;
 
-    scrollToBottom();
+    followBottom();
   });
 
   const actions = useTimelineActions({
